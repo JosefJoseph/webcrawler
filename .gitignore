@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -134,3 +135,11 @@ Thumbs.db
 # Project specific
 exports/*
 !exports/.gitkeep
+||||||| parent of 3508a89 (build: deleted unnecessary dir)
+=======
+exports/
+__pycache__/
+.idea/
+.ipynb_checkpoints/
+.virtual_documents/
+>>>>>>> 3508a89 (build: deleted unnecessary dir)

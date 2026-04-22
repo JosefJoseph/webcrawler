@@ -9,7 +9,7 @@ if 'max_pages' not in st.session_state:
 if 'max_depth' not in st.session_state:
     st.session_state.max_depth = 2
 if 'use_playwright' not in st.session_state:
-    st.session_state.use_playwright = False
+    st.session_state.use_playwright = True
 
 def update_website():
     st.session_state.website = st.session_state.website_input
@@ -38,14 +38,14 @@ st.text_input(
     value=st.session_state.website,
     key='website_input',
     on_change=update_website,
-    placeholder='z.B. https://world.openfoodfacts.org/'
+    placeholder='z.B. https://world.openfoodfacts.org/, https://fdc.nal.usda.gov/'
 )
 st.text_area(
     'Keywords (kommagetrennt)',
     value=st.session_state.infotosearch,
     key='infotosearch_input', 
     on_change=update_infotosearch,
-    placeholder='nutrition facts'
+    placeholder='z.B. nutrition facts, Food Category, ingredients, allergens'
 )
 
 col1, col2 = st.columns(2)
@@ -54,7 +54,7 @@ with col1:
     st.number_input(
         'Maximale Seiten',
         min_value=1,
-        max_value=200,
+        max_value=500,
         value=st.session_state.max_pages,
         step=1,
         key='max_pages_input',
@@ -79,7 +79,7 @@ st.toggle(
     on_change=update_use_playwright,
 )
 
-if st.button('Crawling starten', disabled=not (st.session_state.website and st.session_state.infotosearch)):
+if st.button('Crawling starten', disabled=not st.session_state.website):
     st.session_state.crawling = True
     st.session_state.crawling_completed = False
     st.session_state.crawl_error = ""
@@ -91,4 +91,4 @@ if st.button('Crawling starten', disabled=not (st.session_state.website and st.s
 st.markdown("---")
 
 # Versionnummer
-st.caption("Webcrawler-UI 1.1")
+st.caption("Webcrawler-UI 1.2")
