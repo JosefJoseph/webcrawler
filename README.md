@@ -6,14 +6,6 @@ Version: 1.2
 
 Use the startup scripts from the project root.
 
-The first run will automatically:
-
-- create `.venv`
-- install Python dependencies from `requirements.txt`
-- install the required Playwright Chromium browser
-
-Later runs reuse the existing setup and safely skip steps that are already completed.
-
 ## macOS / Linux
 
 If needed, make the shell script executable once:

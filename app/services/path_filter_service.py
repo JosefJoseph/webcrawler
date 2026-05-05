@@ -29,6 +29,7 @@ def compile_path_filter_pattern(path_filter: str) -> re.Pattern[str]:
     Returns:
         Kompiliertes Regex-Pattern (case-insensitive).
     """
+    # Replace the "..." wildcard token with regex ".*" for flexible path matching
     escaped = re.escape(path_filter)
     wildcard_pattern = escaped.replace(r"\.\.\.", ".*")
     return re.compile(wildcard_pattern, re.IGNORECASE)
@@ -98,6 +99,7 @@ def build_common_path_suggestions(rows: list[dict[str, Any]], limit: int = 8) ->
         if not path:
             continue
 
+        # Generate prefix suggestions at depth 1–2 (e.g. /food-details, /food-details/123)
         segments = [segment for segment in path.split("/") if segment]
         for depth in range(1, min(3, len(segments)) + 1):
             suggestion = "/" + "/".join(segments[:depth])

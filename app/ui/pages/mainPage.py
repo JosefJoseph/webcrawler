@@ -1,4 +1,6 @@
 import streamlit as st
+from urllib.parse import urlparse
+import requests
 
 if 'website' not in st.session_state:
     st.session_state.website = ""
@@ -7,9 +9,7 @@ if 'infotosearch' not in st.session_state:
 if 'max_pages' not in st.session_state:
     st.session_state.max_pages = 20
 if 'max_depth' not in st.session_state:
-    st.session_state.max_depth = 2
-if 'use_playwright' not in st.session_state:
-    st.session_state.use_playwright = True
+    st.session_state.max_depth = 5
 
 def update_website():
     st.session_state.website = st.session_state.website_input
@@ -24,10 +24,6 @@ def update_max_pages():
 
 def update_max_depth():
     st.session_state.max_depth = st.session_state.max_depth_input
-
-
-def update_use_playwright():
-    st.session_state.use_playwright = st.session_state.use_playwright_input
 
 st.title('Webcrawler')
 
@@ -72,23 +68,35 @@ with col2:
         on_change=update_max_depth,
     )
 
-st.toggle(
-    'JavaScript-Seiten mit Playwright laden',
-    value=st.session_state.use_playwright,
-    key='use_playwright_input',
-    on_change=update_use_playwright,
-)
+def checkUrlValid(url: str):
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except ValueError:
+        return False
+    
+def checkUrlReachable(url: str):
+    try:
+        requests.get(url, timeout=5)
+        return True
+    except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+        return False
 
 if st.button('Crawling starten', disabled=not st.session_state.website):
-    st.session_state.crawling = True
-    st.session_state.crawling_completed = False
-    st.session_state.crawl_error = ""
-    st.session_state.crawl_result_rows = []
-    st.session_state.crawl_debug_logs = []
-    st.session_state.last_crawl_signature = None
-    st.switch_page("pages/crawlPage.py")
+    if not checkUrlValid(st.session_state.website):
+        st.error("Ungültige Start-URL")
+    elif not checkUrlReachable(st.session_state.website):
+        st.error("Start-URL ist nicht erreichbar")
+    else:
+        st.session_state.crawling = True
+        st.session_state.crawling_completed = False
+        st.session_state.crawl_error = ""
+        st.session_state.crawl_result_rows = []
+        st.session_state.crawl_debug_logs = []
+        st.session_state.last_crawl_signature = None
+        st.switch_page("pages/crawlPage.py")
 
 st.markdown("---")
 
 # Versionnummer
-st.caption("Webcrawler-UI 1.2")
+st.caption("Webcrawler-UI 1.3")

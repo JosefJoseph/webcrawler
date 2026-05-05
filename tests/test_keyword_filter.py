@@ -1,7 +1,97 @@
-from app.services.keyword_filter import extract_match_contexts, parse_keywords
+from app.services.keyword_filter import (
+    extract_match_contexts,
+    get_available_keyword_groups,
+    get_keywords_from_groups,
+    merge_keywords,
+    normalize_keyword,
+    normalize_keywords,
+    parse_keywords,
+)
+
+
+# ---------------------------------------------------------------------------
+# normalize_keyword / normalize_keywords
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_keyword_strips_and_lowercases():
+    assert normalize_keyword("  Nutrition Facts  ") == "nutrition facts"
+
+
+def test_normalize_keyword_collapses_whitespace():
+    assert normalize_keyword("supply   chain") == "supply chain"
+
+
+def test_normalize_keywords_deduplicates():
+    result = normalize_keywords(["food", "FOOD", "Food"])
+    assert result == ["food"]
+
+
+def test_normalize_keywords_removes_empty():
+    result = normalize_keywords(["food", "", "  ", "drink"])
+    assert result == ["food", "drink"]
+
+
+# ---------------------------------------------------------------------------
+# get_available_keyword_groups / get_keywords_from_groups
+# ---------------------------------------------------------------------------
+
+
+def test_get_available_keyword_groups_returns_dict():
+    groups = get_available_keyword_groups()
+    assert isinstance(groups, dict)
+    assert "inhaltsstoffe" in groups
+    assert "lieferkette" in groups
+    assert "nachhaltigkeit" in groups
+
+
+def test_get_keywords_from_groups_known_group():
+    keywords = get_keywords_from_groups(["inhaltsstoffe"])
+    assert "ingredient" in keywords or "ingredients" in keywords
+
+
+def test_get_keywords_from_groups_unknown_group():
+    keywords = get_keywords_from_groups(["nonexistent"])
+    assert keywords == []
+
+
+# ---------------------------------------------------------------------------
+# merge_keywords
+# ---------------------------------------------------------------------------
+
+
+def test_merge_keywords_combines_custom_and_group():
+    result = merge_keywords(raw_keywords="custom_kw", selected_groups=["inhaltsstoffe"])
+    assert "custom_kw" in result
+    assert "ingredient" in result or "ingredients" in result
+
+
+def test_merge_keywords_empty_inputs():
+    result = merge_keywords(raw_keywords="", selected_groups=[])
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# parse_keywords
+# ---------------------------------------------------------------------------
+
 
 def test_parse_keywords():
     assert parse_keywords("a, b, c") == ["a", "b", "c"]
+
+
+def test_parse_keywords_semicolons():
+    assert parse_keywords("a; b; c") == ["a", "b", "c"]
+
+
+def test_parse_keywords_empty():
+    assert parse_keywords("") == []
+
+
+# ---------------------------------------------------------------------------
+# extract_match_contexts
+# ---------------------------------------------------------------------------
+
 
 def test_extract_match_contexts():
     contexts = extract_match_contexts("Nutrition facts are listed here.", "nutrition", window=10)

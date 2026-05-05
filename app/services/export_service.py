@@ -173,6 +173,7 @@ def _extract_text_corpus(row: dict[str, Any]) -> str:
 def _extract_with_label(text: str, labels: list[str]) -> str:
     """Extrahiert den Wert nach einem bekannten Label wie `Ingredients:`."""
     for label in labels:
+        # Match "Label: value" up to the next "Label:" boundary or end of string
         pattern = re.compile(
             rf'{re.escape(label)}\s*:\s*(.+?)(?=\s+[A-Z][A-Za-z0-9\s\-/()]+\s*:|$)',
             re.IGNORECASE,
@@ -402,6 +403,7 @@ def _to_number(value: str) -> float | int | None:
     if not value_str:
         return None
     value_str = value_str.replace(',', '.')
+    # Strip comparison operators (< >) from values like "< 1 g" before parsing
     value_str = value_str.replace('<', '').replace('>', '')
     match = re.search(r'\d+(?:\.\d+)?', value_str)
     if not match:
@@ -462,6 +464,7 @@ def map_nutrient_to_normalized_key(nutrient_name: str) -> str | None:
         'vitamin k (phylloquinone)': 'vitamin_k',
         'vitamin a, rae': 'vitamin_a',
     }
+    # Two-tier lookup: exact match first, then substring-contains fallback
     if name in direct_map:
         return direct_map[name]
 
@@ -559,6 +562,7 @@ def normalize_food_record_for_nosql(
             debug_logger('DEBUG', f'Nährstoff-Mapping: {nutrient_name} -> {normalized_key}')
             debug_logger('DEBUG', f'Nährstoff ins Array übernommen: {nutrient_name}')
 
+    # Alias: if 'sugar' wasn't extracted but 'sugars_total' was, use that value
     if summary.get('sugar') is None and summary.get('sugars_total') is not None:
         summary['sugar'] = summary.get('sugars_total')
 
@@ -574,7 +578,7 @@ def normalize_food_record_for_nosql(
         'page_title': structured_record.get('page_title', ''),
         'source': {
             'domain': parsed_url.netloc,
-            'crawler_version': 'webcrawler-ui-1.1',
+            'crawler_version': 'webcrawler-ui-1.3',
             'fetched_at': None,
             'language': structured_record.get('language', ''),
             'country': structured_record.get('country', ''),
