@@ -5,15 +5,8 @@ import pandas as pd
 import app.services.export_service as export_service
 
 
-def test_export_to_pdf_writes_pdf_file(tmp_path, monkeypatch):
-    # Patch generate_filename to write into tmp_path
+def test_export_to_pdf_writes_pdf_file(tmp_path):
     output_file = str(tmp_path / "results.pdf")
-    monkeypatch.setattr(
-        export_service,
-        "generate_filename",
-        lambda base_name, domain, format_ext: output_file,
-    )
-    monkeypatch.setattr("os.makedirs", lambda *a, **kw: None)
 
     df = pd.DataFrame(
         [
@@ -27,7 +20,7 @@ def test_export_to_pdf_writes_pdf_file(tmp_path, monkeypatch):
         ]
     )
 
-    result_path = export_service.export_to_pdf(df, "example.com")
+    result_path = export_service.export_to_pdf(df, "example.com", output_file)
 
     path = Path(result_path)
     assert path.exists()
@@ -35,34 +28,22 @@ def test_export_to_pdf_writes_pdf_file(tmp_path, monkeypatch):
     assert path.read_bytes().startswith(b"%PDF")
 
 
-def test_export_to_csv_writes_csv_file(tmp_path, monkeypatch):
+def test_export_to_csv_writes_csv_file(tmp_path):
     output_file = str(tmp_path / "results.csv")
-    monkeypatch.setattr(
-        export_service,
-        "generate_filename",
-        lambda base_name, domain, format_ext: output_file,
-    )
-    monkeypatch.setattr("os.makedirs", lambda *a, **kw: None)
 
     df = pd.DataFrame([{"url": "https://example.com", "title": "Test"}])
-    result_path = export_service.export_to_csv(df, "example.com")
+    result_path = export_service.export_to_csv(df, "example.com", output_file)
 
     path = Path(result_path)
     assert path.exists()
     assert path.suffix == ".csv"
 
 
-def test_export_to_json_writes_json_file(tmp_path, monkeypatch):
+def test_export_to_json_writes_json_file(tmp_path):
     output_file = str(tmp_path / "results.json")
-    monkeypatch.setattr(
-        export_service,
-        "generate_filename",
-        lambda base_name, domain, format_ext: output_file,
-    )
-    monkeypatch.setattr("os.makedirs", lambda *a, **kw: None)
 
     records = [{"url": "https://example.com", "title": "Test"}]
-    result_path = export_service.export_to_json(records, "example.com")
+    result_path = export_service.export_to_json(records, "example.com", output_file)
 
     path = Path(result_path)
     assert path.exists()
@@ -73,4 +54,4 @@ def test_generate_filename_includes_domain():
     name = export_service.generate_filename("crawl_results", "example.com", "csv")
     assert "example_com" in name
     assert name.endswith(".csv")
-    assert name.startswith("exports/")
+    assert name.startswith("crawl_results_")

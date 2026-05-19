@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 
@@ -43,7 +44,7 @@ def restore_original_results(original_rows: list[dict[str, Any]]) -> list[dict[s
     Returns:
         Kopie der ursprünglichen Ergebnisliste.
     """
-    return list(original_rows)
+    return copy.deepcopy(original_rows)
 
 
 def compute_removed_count(original_rows: list[dict[str, Any]], current_rows: list[dict[str, Any]]) -> int:

@@ -25,7 +25,7 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
 
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 
-call "%VENV_PYTHON%" -c "import importlib.util, sys; required=('requests', 'bs4', 'lxml', 'streamlit', 'playwright', 'fpdf', 'tabulate'); sys.exit(0 if all(importlib.util.find_spec(name) for name in required) else 1)" >nul 2>nul
+call "%VENV_PYTHON%" -c "import importlib.util, sys; required=('requests', 'bs4', 'lxml', 'streamlit', 'playwright', 'fpdf', 'tabulate', 'pandas', 'torch', 'sentence_transformers'); sys.exit(0 if all(importlib.util.find_spec(name) for name in required) else 1)" >nul 2>nul
 if errorlevel 1 (
     echo Upgrading pip...
     call "%VENV_PYTHON%" -m pip install --upgrade pip
@@ -48,5 +48,4 @@ if errorlevel 1 (
 )
 
 echo Starting Streamlit app...
-set "PYTHONPATH=%CD%"
 call "%VENV_PYTHON%" -m streamlit run app/ui/streamlit_app.py

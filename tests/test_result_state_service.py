@@ -57,3 +57,14 @@ def test_remove_result_by_url_no_match() -> None:
 
 def test_restore_original_results_empty() -> None:
     assert restore_original_results([]) == []
+
+
+def test_remove_result_by_url_removes_all_duplicates() -> None:
+    rows = [{"url": "https://a"}, {"url": "https://a"}, {"url": "https://b"}]
+    result = remove_result_by_url(rows, "https://a")
+    assert result == [{"url": "https://b"}]
+
+
+def test_compute_removed_count_after_clear_all() -> None:
+    original = [{"url": "https://a"}, {"url": "https://b"}, {"url": "https://c"}]
+    assert compute_removed_count(original, []) == 3

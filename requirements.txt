@@ -1,7 +1,26 @@
-requests
-beautifulsoup4
-lxml
-streamlit
-playwright
-fpdf
-tabulate
+# Core web / parsing
+requests>=2.31.0,<3.0
+beautifulsoup4>=4.12.0,<5.0
+lxml>=4.9.0,<7.0
+
+# UI
+streamlit>=1.35.0,<2.0
+
+# Browser automation (headless Chromium)
+playwright>=1.40.0,<2.0
+
+# PDF export — pyfpdf 1.7.x (stable, Latin-1); pin to avoid fpdf2 API breakage
+fpdf==1.7.2
+
+# Table formatting
+tabulate>=0.9.0,<1.0
+
+# Data processing
+pandas>=2.0.0,<4.0
+
+# ML / semantic search
+torch>=2.1.0,<3.0
+sentence-transformers>=2.6.0,<6.0
+
+# Testing
+pytest>=7.0.0

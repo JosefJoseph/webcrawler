@@ -24,7 +24,7 @@ if [ ! -x "$VENV_PYTHON" ]; then
   exit 1
 fi
 
-if ! "$VENV_PYTHON" -c "import importlib.util, sys; required=('requests', 'bs4', 'lxml', 'streamlit', 'playwright', 'fpdf', 'tabulate'); sys.exit(0 if all(importlib.util.find_spec(name) for name in required) else 1)" >/dev/null 2>&1; then
+if ! "$VENV_PYTHON" -c "import importlib.util, sys; required=('requests', 'bs4', 'lxml', 'streamlit', 'playwright', 'fpdf', 'tabulate', 'pandas', 'torch', 'sentence_transformers'); sys.exit(0 if all(importlib.util.find_spec(name) for name in required) else 1)" >/dev/null 2>&1; then
   echo "Upgrading pip..."
   "$VENV_PYTHON" -m pip install --upgrade pip
 
@@ -42,5 +42,4 @@ else
 fi
 
 echo "Starting Streamlit app..."
-export PYTHONPATH="$ROOT_DIR"
 exec "$VENV_PYTHON" -m streamlit run app/ui/streamlit_app.py

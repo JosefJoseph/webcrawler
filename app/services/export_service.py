@@ -1,11 +1,13 @@
 import json
-import os
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 import pandas as pd
 from fpdf import FPDF
+
+from app.services.export_formatter import format_markdown_report, format_pdf_report
 
 
 CSV_WIDE_COLUMNS = [
@@ -49,8 +51,22 @@ CSV_WIDE_COLUMNS = [
     'keyword_matches',
     'matched_block_count',
     'match_occurrence_count',
+    'matched_by',
+    'semantic_score',
     'raw_metadata_json',
     'raw_text',
+]
+
+RESEARCH_EXPORT_COLUMNS = [
+    "title",
+    "url",
+    "matched_by",
+    "semantic_score",
+    "matched_terms",
+    "matched_hints",
+    "snippet",
+    "crawl_timestamp",
+    "matched_blocks",
 ]
 
 _NUTRIENT_FIELD_MAP = {
@@ -286,6 +302,8 @@ def normalize_food_record(
     record['keyword_matches'] = ', '.join(row.get('keyword_matches', []))
     record['matched_block_count'] = row.get('matched_block_count', 0)
     record['match_occurrence_count'] = row.get('match_occurrence_count', 0)
+    record['matched_by'] = row.get('matched_by') or 'keyword'
+    record['semantic_score'] = row.get('semantic_score')
     record['raw_text'] = text
 
     record['fdc_id'] = _extract_fdc_id(url, text)
@@ -675,16 +693,68 @@ def build_food_json_records(
 
     return json_records, stats
 
+
+def _build_snippet(row: dict[str, Any], max_length: int = 320) -> str:
+    source_text = str(row.get("text") or "").strip()
+    if not source_text:
+        for block in row.get("matched_blocks", []):
+            block_text = str(block.get("text") or "").strip()
+            if block_text:
+                source_text = block_text
+                break
+    if len(source_text) <= max_length:
+        return source_text
+    return f"{source_text[: max_length - 3].rstrip()}..."
+
+
+def build_research_export_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """Normalize crawl results into a compact research-friendly export table."""
+    normalized_rows: list[dict[str, Any]] = []
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for row in rows:
+        matched_terms = row.get("matched_terms") or row.get("keyword_matches") or []
+        if isinstance(matched_terms, list):
+            matched_terms_text = ", ".join(str(item) for item in matched_terms if str(item).strip())
+        else:
+            matched_terms_text = str(matched_terms)
+
+        raw_blocks = row.get("matched_blocks", [])
+        normalized_rows.append(
+            {
+                "title": str(row.get("title") or row.get("page_title") or ""),
+                "url": str(row.get("url") or row.get("source_url") or ""),
+                "matched_by": str(row.get("matched_by") or "keyword"),
+                "semantic_score": row.get("semantic_score"),
+                "matched_terms": matched_terms_text,
+                "matched_hints": str(row.get("semantic_reason") or ""),
+                "snippet": _build_snippet(row),
+                "crawl_timestamp": str(row.get("crawl_timestamp") or now_str),
+                "matched_blocks": raw_blocks if isinstance(raw_blocks, list) else [],
+            }
+        )
+
+    frame = pd.DataFrame(normalized_rows)
+    if frame.empty:
+        frame = pd.DataFrame(columns=RESEARCH_EXPORT_COLUMNS)
+    else:
+        frame = frame.reindex(columns=RESEARCH_EXPORT_COLUMNS)
+    return frame
+
 def generate_filename(base_name: str, domain: str, format_ext: str) -> str:
     """Erzeugt einen stabilen Export-Dateinamen mit Domain und Zeitstempel."""
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     safe_domain = domain.replace('https://', '').replace('http://', '').replace('/', '_').replace('.', '_')
-    return f"exports/{base_name}_{safe_domain}_{timestamp}.{format_ext}"
+    return f"{base_name}_{safe_domain}_{timestamp}.{format_ext}"
 
-def export_to_json(results: pd.DataFrame | list[dict[str, Any]], domain: str) -> str:
-    """Schreibt Ergebnisse als JSON-Datei ins Export-Verzeichnis."""
-    os.makedirs('exports', exist_ok=True)
-    filename = generate_filename('crawl_results', domain, 'json')
+def export_to_json(
+    results: pd.DataFrame | list[dict[str, Any]],
+    domain: str,
+    output_path: str | Path,
+) -> str:
+    """Schreibt Ergebnisse als JSON-Datei an einen expliziten Zielpfad."""
+    target_path = Path(output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if isinstance(results, pd.DataFrame):
         payload = results.to_dict(orient='records')
@@ -693,40 +763,165 @@ def export_to_json(results: pd.DataFrame | list[dict[str, Any]], domain: str) ->
     else:
         payload = []
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    with target_path.open('w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False, indent=4)
-    return filename
+    return str(target_path)
 
-def export_to_csv(results_df: pd.DataFrame, domain: str) -> str:
-    """Schreibt Ergebnisse im CSV-Wide-Format."""
-    os.makedirs('exports', exist_ok=True)
-    filename = generate_filename('crawl_results', domain, 'csv')
-    results_df.to_csv(filename, index=False, encoding='utf-8')
-    return filename
+def export_to_csv(results_df: pd.DataFrame, domain: str, output_path: str | Path) -> str:
+    """Schreibt Ergebnisse im CSV-Wide-Format an einen expliziten Zielpfad."""
+    target_path = Path(output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    results_df.to_csv(target_path, index=False, encoding='utf-8')
+    return str(target_path)
 
-def export_to_pdf(results_df: pd.DataFrame, domain: str) -> str:
-    """Schreibt Ergebnisse als PDF-Bericht."""
-    os.makedirs('exports', exist_ok=True)
-    filename = generate_filename('crawl_results', domain, 'pdf')
+def _compat_cell(pdf, w, h, text, ln=1, align="", fill=False):
+    """Write a cell using whichever fpdf API is available (pyfpdf / fpdf2)."""
+    safe = _pdf_safe_text(text)
+    try:
+        # fpdf2 uses `text=` and expects ln as int
+        pdf.cell(w=w, h=h, text=safe, align=align, fill=fill, ln=int(ln))
+    except TypeError:
+        pdf.cell(w=w, h=h, txt=safe, align=align, fill=fill, ln=int(ln))
+
+
+def _compat_multi_cell(pdf, w, h, text):
+    """Write a multi_cell using whichever fpdf API is available (pyfpdf / fpdf2)."""
+    safe = _pdf_safe_text(text)
+    # fpdf2 changed the effective width semantics of w=0; use page_width instead.
+    effective_w = w
+    if effective_w == 0:
+        try:
+            effective_w = pdf.w - pdf.l_margin - pdf.r_margin
+        except Exception:
+            effective_w = 0
+    try:
+        pdf.multi_cell(w=effective_w, h=h, text=safe)
+    except TypeError:
+        pdf.multi_cell(w=effective_w, h=h, txt=safe)
+
+
+def _pdf_output_bytes(pdf) -> bytes:
+    """Return PDF bytes from an FPDF instance, compatible with pyfpdf and fpdf2."""
+    try:
+        # fpdf2: output() returns bytearray/bytes directly
+        raw = pdf.output()
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw)
+        # pyfpdf with no args returns the filename string — fall through
+    except TypeError:
+        pass
+    # pyfpdf: output(dest='S') returns a latin-1 string
+    try:
+        raw = pdf.output(dest="S")
+        if isinstance(raw, str):
+            return raw.encode("latin-1")
+        return bytes(raw)
+    except Exception:
+        # Last resort: write to a temp buffer
+        import io
+        buf = io.BytesIO()
+        pdf.output(buf)
+        return buf.getvalue()
+
+
+def export_to_pdf(results_df: pd.DataFrame, domain: str, output_path: str | Path) -> str:
+    """Schreibt Ergebnisse als PDF-Bericht an einen expliziten Zielpfad."""
+    target_path = Path(output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Helvetica", size=12)
-    pdf.cell(0, 10, txt=_pdf_safe_text(f"Crawl Results for {domain}"), ln=True)
+    _compat_cell(pdf, 0, 10, f"Crawl Results for {domain}", ln=1)
     pdf.ln(4)
     for _, row in results_df.iterrows():
         pdf.set_font("Helvetica", size=10)
-        pdf.multi_cell(0, 6, txt=_pdf_safe_text(str(row.to_dict())))
-        pdf.multi_cell(0, 6, txt=_pdf_safe_text("---"))
+        row_text = str(row.to_dict())
+        # Truncate very long row text to avoid layout issues
+        if len(row_text) > 500:
+            row_text = row_text[:497] + "..."
+        _compat_multi_cell(pdf, 0, 6, row_text)
+        _compat_multi_cell(pdf, 0, 6, "---")
         pdf.ln(1)
-    pdf.output(filename)
-    return filename
+    pdf_bytes = _pdf_output_bytes(pdf)
+    target_path.write_bytes(pdf_bytes)
+    return str(target_path)
 
-def export_to_markdown(results_df: pd.DataFrame, domain: str) -> str:
-    """Schreibt Ergebnisse als Markdown-Tabelle."""
-    os.makedirs('exports', exist_ok=True)
-    filename = generate_filename('crawl_results', domain, 'md')
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write(f"# Crawl Results for {domain}\n\n")
-        f.write(results_df.to_markdown(index=False))
-    return filename
+def export_to_markdown(results_df: pd.DataFrame, domain: str, output_path: str | Path) -> str:
+    """Schreibt Ergebnisse als Markdown-Tabelle an einen expliziten Zielpfad."""
+    target_path = Path(output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with target_path.open('w', encoding='utf-8') as f:
+        f.write(format_markdown_report(results_df, domain))
+    return str(target_path)
+
+
+def export_to_markdown_str(
+    results_df: pd.DataFrame,
+    domain: str,
+    crawl_settings: dict | None = None,
+) -> str:
+    """Erzeugt Markdown-Inhalt als String ohne Datei-I/O."""
+    markdown = format_markdown_report(results_df, domain)
+    if crawl_settings:
+        setting_lines = [
+            "## Crawl Settings",
+            "",
+        ]
+        for key, value in crawl_settings.items():
+            setting_lines.append(f"- **{key}:** {value}")
+        setting_lines.append("")
+        markdown = "\n".join(setting_lines) + markdown
+    return markdown
+
+
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _escape_csv_cell(value: object) -> object:
+    """Mitigate CSV formula-injection for spreadsheet applications.
+
+    Cells whose string representation starts with a formula-trigger character
+    (``=``, ``+``, ``-``, ``@``, tab, CR) are prefixed with a single quote so
+    that Excel/LibreOffice treat them as plain text instead of formulas.
+
+    Safe numeric values are returned unchanged.
+    """
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value)
+    if text and text[0] in _CSV_INJECTION_PREFIXES:
+        return f"'{text}"
+    return value
+
+
+def _sanitize_df_for_csv(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of *df* with all formula-injection risks escaped."""
+    return df.apply(lambda col: col.map(_escape_csv_cell))
+
+
+def build_csv_bytes(results_df: pd.DataFrame) -> bytes:
+    sanitized = _sanitize_df_for_csv(results_df)
+    return sanitized.to_csv(index=False).encode("utf-8")
+
+
+def build_json_bytes(json_records: list) -> bytes:
+    return json.dumps(json_records, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def build_markdown_bytes(
+    results_df: pd.DataFrame,
+    domain: str,
+    crawl_settings: dict | None = None,
+) -> bytes:
+    export_frame = build_research_export_frame(results_df.to_dict(orient="records"))
+    return export_to_markdown_str(export_frame, domain, crawl_settings).encode("utf-8")
+
+
+def build_pdf_bytes(results_df: pd.DataFrame, domain: str) -> bytes:
+    export_frame = build_research_export_frame(results_df.to_dict(orient="records"))
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    format_pdf_report(pdf, export_frame, domain)
+    return _pdf_output_bytes(pdf)

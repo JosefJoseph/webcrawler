@@ -1,0 +1,10 @@
+{
+  "website": "https://world.openfoodfacts.org/",
+  "infotosearch": "Produkte mit viel Fett",
+  "category_input": "Inhaltsstoffe",
+  "keywords_selection": [],
+  "max_pages": 6,
+  "max_depth": 3,
+  "semantic_search": true,
+  "semantic_threshold": 0.2
+}

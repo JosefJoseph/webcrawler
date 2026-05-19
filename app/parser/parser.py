@@ -373,11 +373,12 @@ def build_page_result(page: dict) -> dict:
         "passage_blocks": [],
     }
 
-    # Prefer passage blocks (heading-grouped) over raw text blocks for richer structure
-    effective_text_blocks = parsed["passage_blocks"] if parsed["passage_blocks"] else parsed["text_blocks"]
-
+    # Keep raw text_blocks AND passage_blocks separately.
+    # Downstream matchers merge them for maximum recall — replacing one with the
+    # other would silently drop tables/lists that only appear in raw blocks.
     return {
         "url": page.get("url", ""),
+        "final_url": page.get("final_url", page.get("url", "")),
         "depth": page.get("depth", 0),
         "status": page.get("status", ""),
         "error": page.get("error", ""),
@@ -387,7 +388,7 @@ def build_page_result(page: dict) -> dict:
         "text": parsed["visible_text"],
         "searchable_text": parsed["searchable_text"],
         "attribute_texts": parsed["attribute_texts"],
-        "text_blocks": effective_text_blocks,
+        "text_blocks": parsed["text_blocks"],
         "passage_blocks": parsed["passage_blocks"],
         "link_count": len(page.get("links", [])),
         "links": page.get("links", []),

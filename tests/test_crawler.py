@@ -126,7 +126,7 @@ def test_crawl_domain_prioritizes_new_product_pages_globally(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages[url], "mock", ""
+        return pages[url], url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
@@ -149,9 +149,12 @@ def test_fetch_html_reports_playwright_fallback(monkeypatch):
         "app.crawler.crawler.fetch_html_playwright",
         lambda url, timeout_ms=20000: (_ for _ in ()).throw(PermissionError("Access is denied")),
     )
-    monkeypatch.setattr("app.crawler.crawler.fetch_html_requests", lambda url, timeout=20: "<html></html>")
+    monkeypatch.setattr(
+        "app.crawler.crawler.fetch_html_requests",
+        lambda url, timeout=20: ("<html></html>", url),
+    )
 
-    html, fetch_method, fetch_error = fetch_html("https://example.com", use_playwright=True)
+    html, final_url, fetch_method, fetch_error = fetch_html("https://example.com", use_playwright=True)
 
     assert html == "<html></html>"
     assert fetch_method == "requests-fallback"
@@ -168,8 +171,8 @@ def test_crawl_domain_disables_playwright_after_first_fallback(monkeypatch):
     def fake_fetch_html(url, use_playwright=False, timeout=15):
         calls.append((url, use_playwright))
         if url == "https://example.com":
-            return pages[url], "requests-fallback", "Playwright failed: NotImplementedError"
-        return pages[url], "requests", ""
+            return pages[url], url, "requests-fallback", "Playwright failed: NotImplementedError"
+        return pages[url], url, "requests", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
@@ -235,11 +238,12 @@ def test_crawl_domain_respects_max_pages(monkeypatch):
     pages["https://example.com"] = '<html><body><a href="/0">Start</a></body></html>'
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=5, max_depth=10)
+    results = crawl_domain("https://example.com", max_pages=5, max_depth=10,
+                           request_delay=0)
     assert len(results) == 5
 
 
@@ -258,11 +262,12 @@ def test_crawl_domain_respects_max_depth(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=100, max_depth=2)
+    results = crawl_domain("https://example.com", max_pages=100, max_depth=2,
+                           request_delay=0)
     visited_urls = [r["url"] for r in results]
 
     # depth 0: start_url, depth 1: /level1, depth 2: /level2 (visited but links not followed)
@@ -288,11 +293,12 @@ def test_crawl_domain_reaches_deep_pages_with_high_max_pages(monkeypatch):
     pages["https://example.com"] = '<html><body><a href="/page0">Start</a></body></html>'
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=100, max_depth=60)
+    results = crawl_domain("https://example.com", max_pages=100, max_depth=60,
+                           request_delay=0)
     # Should visit all 51 pages (start + 50 chain pages)
     assert len(results) == chain_length + 1
 
@@ -308,11 +314,12 @@ def test_crawl_domain_shallow_depth_limits_reachable_pages(monkeypatch):
     pages["https://example.com"] = '<html><body><a href="/page0">Start</a></body></html>'
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=500, max_depth=2)
+    results = crawl_domain("https://example.com", max_pages=500, max_depth=2,
+                           request_delay=0)
     # depth 0: start, depth 1: page0, depth 2: page1 → only 3 pages
     assert len(results) == 3
 
@@ -332,11 +339,12 @@ def test_crawl_domain_wide_site_with_high_max_pages(monkeypatch):
         pages[f"https://example.com/child{i}"] = f"<html><body>Child {i}</body></html>"
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=200, max_depth=5)
+    results = crawl_domain("https://example.com", max_pages=200, max_depth=5,
+                           request_delay=0)
     # 1 start + 100 children = 101
     assert len(results) == num_children + 1
 
@@ -353,11 +361,12 @@ def test_crawl_domain_ignores_external_links(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=15):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=10, max_depth=5)
+    results = crawl_domain("https://example.com", max_pages=10, max_depth=5,
+                           request_delay=0)
     urls = [r["url"] for r in results]
     assert "https://other.com/page" not in urls
     assert "https://example.com/internal" in urls
@@ -371,12 +380,13 @@ def test_crawl_domain_ignores_external_links(monkeypatch):
 def test_crawl_domain_records_error_on_fetch_failure(monkeypatch):
     def failing_fetch(url, use_playwright=False, timeout=15):
         if url == "https://example.com":
-            return '<a href="/broken">Link</a>', "mock", ""
+            return '<a href="/broken">Link</a>', url, "mock", ""
         raise ConnectionError("Connection refused")
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", failing_fetch)
 
-    results = crawl_domain("https://example.com", max_pages=5, max_depth=5)
+    results = crawl_domain("https://example.com", max_pages=5, max_depth=5,
+                           request_delay=0)
     error_results = [r for r in results if r["status"] == "error"]
     assert len(error_results) == 1
     assert "Connection refused" in error_results[0]["error"]
@@ -453,7 +463,7 @@ def test_crawl_domain_discovers_js_rendered_food_detail_links(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=20):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
@@ -477,7 +487,7 @@ def test_crawl_domain_calls_on_progress(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=20):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
@@ -486,7 +496,8 @@ def test_crawl_domain_calls_on_progress(monkeypatch):
     def collect_progress(message, visited=0, total=0, current_url=""):
         messages.append(message)
 
-    crawl_domain("https://example.com", max_pages=1, max_depth=1, on_progress=collect_progress)
+    crawl_domain("https://example.com", max_pages=1, max_depth=1,
+                 on_progress=collect_progress, request_delay=0)
 
     assert len(messages) >= 1
     assert any("Besuche" in m for m in messages)
@@ -506,10 +517,116 @@ def test_crawl_domain_skips_duplicate_urls(monkeypatch):
     }
 
     def fake_fetch_html(url, use_playwright=False, timeout=20):
-        return pages.get(url, "<html></html>"), "mock", ""
+        return pages.get(url, "<html></html>"), url, "mock", ""
 
     monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
 
-    results = crawl_domain("https://example.com", max_pages=10, max_depth=5)
+    results = crawl_domain("https://example.com", max_pages=10, max_depth=5,
+                           request_delay=0)
     urls = [r["url"] for r in results]
     assert urls.count("https://example.com/b") == 1
+
+
+# ---------------------------------------------------------------------------
+# crawl_domain – local/dev build has no external crawl-policy gate
+# ---------------------------------------------------------------------------
+
+
+def test_crawl_domain_local_dev_fetches_directly(monkeypatch):
+    """Local/dev builds fetch directly without an external crawl-policy gate."""
+    pages = {"https://example.com": "<html><body>Hello</body></html>"}
+
+    def fake_fetch_html(url, use_playwright=False, timeout=15):
+        return pages[url], url, "mock", ""
+
+    class _BlockAll:
+        def can_fetch(self, agent, url):
+            return False
+
+    monkeypatch.setattr("app.crawler.crawler.fetch_html", fake_fetch_html)
+
+    results = crawl_domain(
+        "https://example.com", max_pages=5, max_depth=1, request_delay=0,
+    )
+
+    assert len(results) == 1
+    assert results[0]["status"] == "ok"
+    assert results[0]["error"] == ""
+    assert results[0]["url"] == "https://example.com"
+    assert "Hello" in results[0]["html"]
+
+
+def test_crawl_domain_result_row_has_correct_fields(monkeypatch):
+    """Rows contain all expected fields."""
+    class _BlockAll:
+        def can_fetch(self, agent, url):
+            return False
+
+    monkeypatch.setattr("app.crawler.crawler.fetch_html", lambda *a, **kw: ("<html/>", "https://example.com", "mock", ""))
+
+    results = crawl_domain(
+        "https://example.com", max_pages=1, max_depth=0, request_delay=0,
+    )
+
+    row = results[0]
+    for field in ("url", "final_url", "depth", "html", "links", "status", "error",
+                  "fetch_method", "fetch_error"):
+        assert field in row, f"Missing field '{field}' in result row"
+    assert row["status"] == "ok"
+
+
+def test_crawl_domain_fetches_normally(monkeypatch):
+    """Local/dev crawler fetches normally."""
+    pages = {"https://example.com": "<html><body>Hello</body></html>"}
+
+    class _BlockAll:
+        def can_fetch(self, agent, url):
+            return False
+
+    monkeypatch.setattr(
+        "app.crawler.crawler.fetch_html",
+        lambda url, use_playwright=False, timeout=15: (pages[url], url, "mock", ""),
+    )
+
+    results = crawl_domain(
+        "https://example.com", max_pages=5, max_depth=1, request_delay=0,
+    )
+
+    assert len(results) == 1
+    assert results[0]["status"] == "ok"
+
+
+def test_crawl_domain_emits_structured_events(monkeypatch):
+    from app.crawler import crawler as crawler_module
+
+    pages = {
+        "https://example.com": "<html><body><a href='/next'>Next</a></body></html>",
+        "https://example.com/next": "<html><body>Done</body></html>",
+    }
+
+    def fake_fetch_html(url, use_playwright=False, timeout=20):
+        return pages[url], url, "requests", ""
+
+    monkeypatch.setattr(crawler_module, "fetch_html", fake_fetch_html)
+
+    events = []
+
+    def on_event(stage, message="", **fields):
+        events.append((stage, message, fields))
+
+    results = crawler_module.crawl_domain(
+        "https://example.com",
+        max_pages=2,
+        max_depth=1,
+        use_playwright=False,
+        request_delay=0,
+        on_event=on_event,
+    )
+
+    stages = [event[0] for event in events]
+    assert len(results) == 2
+    assert "CRAWLER" in stages
+    assert "FETCH_START" in stages
+    assert "FETCH_OK" in stages
+    assert any(stage == "QUEUE" and message == "enqueue" for stage, message, _ in events)
+    assert any(stage == "CRAWLER" and message == "done" for stage, message, _ in events)
