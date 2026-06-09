@@ -596,7 +596,7 @@ def normalize_food_record_for_nosql(
         'page_title': structured_record.get('page_title', ''),
         'source': {
             'domain': parsed_url.netloc,
-            'crawler_version': 'webcrawler-ui-1.3',
+            'crawler_version': 'webcrawler-ui-2.1',
             'fetched_at': None,
             'language': structured_record.get('language', ''),
             'country': structured_record.get('country', ''),

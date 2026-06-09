@@ -76,6 +76,9 @@ def test_link_priority_score_navigation_page():
 # ---------------------------------------------------------------------------
 # extract_links / extract_link_candidates
 # ---------------------------------------------------------------------------
+
+
+def test_extract_link_candidates_prioritizes_product_cards():
     html = """
     <html>
         <body>

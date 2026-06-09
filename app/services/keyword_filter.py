@@ -372,13 +372,103 @@ def _build_matched_blocks(results_item: dict, keywords: list[str]) -> tuple[list
     return matched_blocks, _dedupe_contexts(page_contexts)
 
 
-def _extract_semantic_snippet(item: dict, max_length: int = 300) -> str:
-    """Extract the best available text snippet for a semantic-only match.
+def _is_boilerplate_block(block: dict) -> bool:
+    """Heuristik: True wenn der Block wahrscheinlich Navigation oder Boilerplate ist."""
+    text = (block.get("text") or "").strip()
+    tag = (block.get("tag") or "").lower()
+    source_type = (block.get("source_type") or "")
 
-    Tries passage_blocks first (richer context), then text_blocks, then
-    falls back to the first characters of searchable_text.
+    if not text:
+        return True
+
+    # Strukturelle Inhaltsblöcke (Passage-Abschnitte) nie als Boilerplate klassifizieren
+    if source_type == "passage_block" or tag == "section":
+        return False
+
+    words = text.split()
+    word_count = len(words)
+    if word_count == 0:
+        return True
+
+    # Navigations-Trennzeichen: ·, |, », › oder " / " (Breadcrumbs, Menüleisten)
+    sep_count = sum(1 for ch in text if ch in "·|»›") + text.count(" / ")
+    if sep_count >= 2:
+        return True
+
+    # <li>-Tags mit kurzer durchschnittlicher Wortlänge → wahrscheinlich Navigationslabels
+    if tag == "li":
+        avg_word_len = sum(len(w.strip(".,;:!?\"'()[]")) for w in words) / word_count
+        if avg_word_len < 5:
+            return True
+
+    # Überwiegend TitleCase/UPPERCASE + kurze "Sätze" → Navigationslabels.
+    # In deutschen Fließtexten sind ~25–50 % der Wörter großgeschrieben (Substantive,
+    # Satzanfänge); 75 %+ deutet auf Menü-Labels wie "Über Uns · Kontakt" hin.
+    title_or_upper_count = sum(
+        1 for w in words
+        if len(w) >= 3 and w[0].isupper() and (w[1:].islower() or w.isupper())
+    )
+    if word_count >= 4 and title_or_upper_count / word_count > 0.75:
+        sentences = [s for s in re.split(r"[.!?]+", text) if s.strip()]
+        avg_words_per_sentence = word_count / max(len(sentences), 1)
+        if avg_words_per_sentence < 4:
+            return True
+
+    # Sehr kurze Inline-Elemente (Links, Labels) → Navigations-Fragmente
+    if tag in ("a", "span", "button", "nav") and word_count <= 5:
+        return True
+
+    return False
+
+
+def _extract_semantic_snippet(item: dict, keywords: list[str], semantic_matcher=None, max_length: int = 300) -> str:
+    """Findet den semantisch relevantesten Inhaltsblock einer Seite.
+
+    Filtert Navigation und Boilerplate vor dem Scoring; passage_blocks erhalten
+    einen kleinen Score-Bonus, da sie strukturell zusammenhängende Abschnitte sind.
     """
-    for block in list(item.get("passage_blocks", [])) + list(item.get("text_blocks", [])):
+    all_blocks = list(item.get("passage_blocks", [])) + list(item.get("text_blocks", []))
+
+    if semantic_matcher and semantic_matcher.ready and all_blocks and keywords:
+        # Deduplizieren, Mindestlänge prüfen, Boilerplate herausfiltern
+        seen: set[str] = set()
+        candidates: list[tuple[str, bool]] = []  # (text, is_passage)
+        for b in all_blocks:
+            text = (b.get("text") or "").strip()
+            if len(text) < 40 or text in seen:
+                continue
+            seen.add(text)
+            if _is_boilerplate_block(b):
+                continue
+            is_passage = b.get("source_type") == "passage_block" or b.get("tag") == "section"
+            candidates.append((text, is_passage))
+
+        # Wenn die Filterung alles entfernt hat: alle langen Blöcke als Fallback nehmen
+        if not candidates:
+            seen.clear()
+            for b in all_blocks:
+                text = (b.get("text") or "").strip()
+                if len(text) >= 40 and text not in seen:
+                    seen.add(text)
+                    is_passage = b.get("source_type") == "passage_block" or b.get("tag") == "section"
+                    candidates.append((text, is_passage))
+
+        if candidates:
+            candidate_texts = [t for t, _ in candidates]
+            results = semantic_matcher.match_batch(candidate_texts, keywords)
+            best_text = ""
+            best_score = -1.0
+            for (text, is_passage), res in zip(candidates, results):
+                # Kleiner Bonus für passage_blocks: bei gleichem Score gewinnt der Inhaltsabschnitt
+                adj_score = res.score + (0.05 if is_passage else 0.0)
+                if adj_score > best_score:
+                    best_score = adj_score
+                    best_text = text
+            if best_text:
+                return best_text[:max_length]
+
+    # Fallback ohne Scoring: erster langer Block
+    for block in all_blocks:
         text = (block.get("text") or "").strip()
         if len(text) >= 40:
             return text[:max_length]
@@ -555,14 +645,27 @@ def filter_results_by_keywords(
                     item["matched_by"] = "semantic"
                     item["semantic_score"] = sem_result.score
                     item["semantic_reason"] = sem_result.matched_hint
-                    # Provide a concrete evidence snippet for semantic-only matches
-                    item["semantic_snippet"] = _extract_semantic_snippet(item)
+                    
+                    snippet_text = _extract_semantic_snippet(item, keywords, semantic_matcher)
+                    item["semantic_snippet"] = snippet_text
+                    
+                    item["matched_blocks"] = [{
+                        "block_id": "semantic-match",
+                        "source_type": "semantic_extract",
+                        "tag": "div",
+                        "text": snippet_text,
+                        "keywords": [sem_result.matched_hint or "Semantischer Treffer"],
+                        "match_count": 1,
+                        "matches": []
+                    }]
+                    # Auch die Zusammenfassung kurz neu generieren lassen
+                    item["match_summary"] = f"[{sem_result.matched_hint or 'KI-Treffer'}] {snippet_text[:220]}..."
+                    item["matched_block_count"] = 1
+                    # ==========================================
+
                     if sem_result.matched_hint:
                         item["matched_terms"] = list(dict.fromkeys(item["matched_terms"] + [sem_result.matched_hint]))
-                    _log(
-                        "DEBUG",
-                        f'Semantic match: {item.get("url", "")} score={sem_result.score:.2f} hint="{sem_result.matched_hint or "-"}"',
-                    )
+                    
                     matched_results.append(item)
                 else:
                     item["matched_by"] = None

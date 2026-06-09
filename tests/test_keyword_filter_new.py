@@ -204,7 +204,7 @@ def test_extract_semantic_snippet_prefers_passage_blocks():
         "passage_blocks": [{"text": "This is a much longer and more informative passage block for testing purposes here."}],
         "searchable_text": "fallback text",
     }
-    snippet = _extract_semantic_snippet(item)
+    snippet = _extract_semantic_snippet(item, keywords=[])
     assert "passage block" in snippet
 
 
@@ -214,7 +214,7 @@ def test_extract_semantic_snippet_falls_back_to_text_blocks():
         "passage_blocks": [],
         "searchable_text": "fallback text",
     }
-    snippet = _extract_semantic_snippet(item)
+    snippet = _extract_semantic_snippet(item, keywords=[])
     assert "text block" in snippet
 
 
@@ -224,7 +224,7 @@ def test_extract_semantic_snippet_falls_back_to_searchable():
         "passage_blocks": [],
         "searchable_text": "fallback searchable text is used here",
     }
-    snippet = _extract_semantic_snippet(item)
+    snippet = _extract_semantic_snippet(item, keywords=[])
     assert "fallback" in snippet
 
 

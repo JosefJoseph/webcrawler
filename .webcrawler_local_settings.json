@@ -1,10 +1,10 @@
 {
-  "website": "https://world.openfoodfacts.org/",
-  "infotosearch": "Produkte mit viel Fett",
+  "website": "https://de.wikipedia.org/wiki/Weltraum",
+  "infotosearch": "Wem gehört der Weltraum und rechtliche Verträge",
   "category_input": "Inhaltsstoffe",
   "keywords_selection": [],
   "max_pages": 6,
   "max_depth": 3,
   "semantic_search": true,
-  "semantic_threshold": 0.2
+  "semantic_threshold": 0.15
 }

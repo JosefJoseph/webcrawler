@@ -3,10 +3,8 @@ import re
 from datetime import datetime
 from urllib.parse import urlparse
 
-from app.crawler.crawler import crawl_domain
 from app.services.crawl_request_service import should_run_crawl
-from app.parser.parser import build_page_result
-from app.services.keyword_filter import filter_results_by_keywords, parse_keywords
+from app.services.keyword_filter import parse_keywords
 from app.services.path_filter_service import (
     build_common_path_suggestions,
     parse_path_filters,
@@ -197,272 +195,61 @@ elif _run_crawl:
         f"session_threshold={st.session_state.get('semantic_threshold', '(nicht gesetzt)')}",
     )
 
-    from app.crawler.crawler import normalize_url as _normalize_url
-    _normalized_start = _normalize_url(website)
+    from app.services.crawl_pipeline_service import run_crawl_pipeline, CrawlPipelineResult
 
-    add_debug_log(
-        "CONFIG",
-        f"start_url={website} normalized={_normalized_start} "
-        f"max_pages={max_pages} max_depth={max_depth} "
-        f"semantic_enabled={semantic_search_enabled} "
-        f"semantic_threshold={semantic_threshold:.2f} "
-    )
-    add_debug_log(
-        "INFO",
-        f"Crawl started with semantic matching {'enabled' if semantic_search_enabled else 'disabled'}, "
-        f"threshold={semantic_threshold:.2f}",
-    )
+    cached_matcher = st.session_state.get("semantic_matcher_instance")
+    if (
+        cached_matcher
+        and cached_matcher.ready
+        and cached_matcher.threshold == semantic_threshold
+        and semantic_search_enabled
+    ):
+        pipeline_matcher = cached_matcher
+        add_debug_log("INFO", "Semantic-Modell wiederverwendet (cached)")
+    else:
+        pipeline_matcher = None
+        if not semantic_search_enabled:
+            st.session_state.pop("semantic_matcher_instance", None)
 
-    try:
-        with st.spinner("Seiten werden gecrawlt und ausgewertet..."):
-            crawled_pages = crawl_domain(
-                start_url=website,
-                max_pages=max_pages,
-                max_depth=max_depth,
-                use_playwright=True,
-                on_progress=handle_crawl_progress,
-                on_event=handle_crawl_event,
-            )
+    with st.spinner("Seiten werden gecrawlt und ausgewertet..."):
+        result: CrawlPipelineResult = run_crawl_pipeline(
+            website=website,
+            keywords=keywords,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            use_playwright=True,
+            semantic_enabled=semantic_search_enabled,
+            semantic_threshold=semantic_threshold,
+            semantic_matcher=pipeline_matcher,
+            on_progress=handle_crawl_progress,
+            on_event=handle_crawl_event,
+            debug_logger=add_debug_log,
+        )
 
-            # --- Crawl result classification ---
-            ok_pages = [p for p in crawled_pages if p.get("status") == "ok"]
-            skipped_pages = [p for p in crawled_pages if p.get("status") == "skipped"]
-            error_pages = [p for p in crawled_pages if p.get("status") == "error"]
+    if result.error:
+        st.session_state.crawl_result_rows = []
+        st.session_state.crawl_result_rows_all = []
+        st.session_state.crawling_completed = False
+        st.session_state.crawling = False
+        st.session_state.crawl_error = result.error
+        st.session_state.last_crawl_signature = None
+        st.session_state.crawl_semantic_stats = None
+        st.session_state.crawl_pipeline_stats = None
+        if request_id:
+            st.session_state.last_processed_crawl_request_id = request_id
+        st.session_state.crawl_requested = False
+    else:
+        matched_results = result.matched_results
+        unmatched_results = result.unmatched_results
 
-            add_debug_log("DEBUG", f"Gecrawlte Seiten: {len(crawled_pages)}")
-            add_debug_log(
-                "CRAWL",
-                f"attempted={len(crawled_pages)} ok={len(ok_pages)} "
-                f"skipped={len(skipped_pages)} failed={len(error_pages)}",
-            )
-
-            skipped_reasons = {}
-            for p in skipped_pages:
-                reason = p.get("error", "skipped")
-                skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
-                add_debug_log(
-                    "SKIP",
-                    f"url={p['url']} reason={reason}",
-                )
-                add_debug_log(
-                    "FETCH",
-                    f"success=false url={p['url']} status=skipped reason={reason}",
-                )
-            for p in error_pages:
-                add_debug_log(
-                    "FETCH",
-                    f"success=false url={p['url']} error={p.get('error', '')}",
-                )
-            for p in ok_pages:
-                html_chars = len(p.get("html", ""))
-                links = len(p.get("links", []))
-                add_debug_log(
-                    "FETCH",
-                    f"success=true url={p['url']} final_url={p.get('final_url', p.get('url', ''))} "
-                    f"status_code={p.get('status_code', 'n/a') or 'n/a'} "
-                    f"content_type={p.get('content_type', 'n/a') or 'n/a'} "
-                    f"html_chars={html_chars} links={links} method={p.get('fetch_method', '')}",
-                )
-
-            if skipped_reasons:
-                add_debug_log(
-                    "DEBUG",
-                    f"Übersprungene Seiten nach Grund: {skipped_reasons}",
-                )
-
-            # --- Parse stage ---
-            page_results = []
-            total_text_chars = 0
-            pages_with_text_count = 0
-
-            for page in crawled_pages:
-                page_result = build_page_result(page)
-                page_results.append(page_result)
-
-                text_len = len(page_result.get("text", "") or "")
-                blocks = len(page_result.get("text_blocks", []))
-                passages = len(page_result.get("passage_blocks", []))
-                snippet = (page_result.get("text", "") or "")[:80].replace("\n", " ")
-                total_text_chars += text_len
-                if text_len > 0 or blocks > 0:
-                    pages_with_text_count += 1
-
-                add_debug_log(
-                    "PARSE",
-                    f"url={page_result.get('url', '')} text_chars={text_len} "
-                    f"text_blocks={blocks} passage_blocks={passages} "
-                    f'snippet="{snippet}"',
-                )
-                add_debug_log(
-                    "DEBUG",
-                    (
-                        f'Parser-Extraktion für {page_result.get("url", "")}: '
-                        f'Titel="{page_result.get("title", "")}", '
-                        f'text_blocks={blocks}, '
-                        f'attribute_texts={len(page_result.get("attribute_texts", []))}'
-                    ),
-                )
-
-            add_debug_log(
-                "DEBUG",
-                f"Ergebnisanzahl vor Keyword-Filter: {len(page_results)} | "
-                f"Seiten mit Text: {pages_with_text_count} | "
-                f"Gesamtzeichen: {total_text_chars}",
-            )
-
-            # --- Store pipeline stats ---
-            st.session_state.crawl_pipeline_stats = {
-                "attempted": len(crawled_pages),
-                "ok": len(ok_pages),
-                "skipped": len(skipped_pages),
-                "failed": len(error_pages),
-                "parsed": len(page_results),
-                "pages_with_text": pages_with_text_count,
-                "total_chars": total_text_chars,
-            }
-
-            # --- Keyword match stage ---
-            add_debug_log(
-                "MATCH",
-                f"input_pages={len(page_results)} keywords={keywords}",
-            )
-
-            # --- Semantic stage ---
-            semantic_matcher_instance = None
-            model_ready = False
-            model_error = None
-
-            if semantic_search_enabled:
-                from app.services.semantic_matcher import SemanticMatcher
-                add_debug_log(
-                    "INFO",
-                    f"Semantische Suche aktiviert, Schwellenwert={semantic_threshold}",
-                )
-                add_debug_log("INFO", "Lade Semantic-Modell...")
-                with st.spinner("Semantic matching (Beta): Modell wird geladen..."):
-                    add_debug_log(
-                        "DEBUG",
-                        f"[Threshold] SemanticMatcher wird mit threshold={semantic_threshold:.2f} erstellt",
-                    )
-                    matcher = SemanticMatcher(threshold=semantic_threshold)
-                    success, msg = matcher.initialize()
-                    if success:
-                        semantic_matcher_instance = matcher
-                        st.session_state["semantic_matcher_instance"] = matcher
-                        model_ready = True
-                        add_debug_log("INFO", f"Semantic-Backend bereit: {msg}")
-                        add_debug_log(
-                            "INFO",
-                            f"Semantic backend using device: "
-                            f"{semantic_matcher_instance.device or 'cpu'}, "
-                            f"threshold={matcher.threshold:.2f}",
-                        )
-                        add_debug_log(
-                            "SEMANTIC",
-                            f"ready=true device={semantic_matcher_instance.device or 'cpu'} "
-                            f"threshold={matcher.threshold:.2f}",
-                        )
-                    else:
-                        model_error = msg
-                        add_debug_log(
-                            "WARNING",
-                            f"Semantic model unavailable, falling back to keyword filtering: {msg}",
-                        )
-                        add_debug_log("SEMANTIC", f'ready=false error="{msg}"')
-            else:
-                st.session_state.pop("semantic_matcher_instance", None)
-                add_debug_log("SEMANTIC", "ready=false enabled=false")
-
-            matched_results, unmatched_results = filter_results_by_keywords(
-                page_results,
-                keywords,
-                semantic_matcher=semantic_matcher_instance,
-                debug_logger=add_debug_log,
-            )
-            add_debug_log(
-                "DEBUG", f"Ergebnisanzahl nach Keyword-Filter: {len(matched_results)}"
-            )
-
-            # --- RESULT log ---
-            add_debug_log(
-                "RESULT",
-                f"matched={len(matched_results)} unmatched={len(unmatched_results)} "
-                f"skipped={len(skipped_pages)} failed={len(error_pages)}",
-            )
-
-            # Compute semantic stats for zero-results diagnostic
-            all_score_items = matched_results + unmatched_results
-            all_scores = [
-                r["semantic_score"]
-                for r in all_score_items
-                if r.get("semantic_score") is not None
-            ]
-            st.session_state.crawl_semantic_stats = {
-                "max_score": max(all_scores) if all_scores else None,
-                "avg_score": sum(all_scores) / len(all_scores) if all_scores else None,
-                "min_score": min(all_scores) if all_scores else None,
-                "score_count": len(all_scores),
-                "total_crawled": len(page_results),
-                "keyword_count": sum(
-                    1 for r in matched_results if r.get("matched_by") == "keyword"
-                ),
-                "semantic_count": sum(
-                    1 for r in matched_results if r.get("matched_by") == "semantic"
-                ),
-                "both_count": sum(
-                    1 for r in matched_results if r.get("matched_by") == "keyword+semantic"
-                ),
-                "unmatched_count": len(unmatched_results),
-                "threshold": semantic_threshold,
-                "semantic_enabled": semantic_search_enabled,
-                "model_ready": model_ready if semantic_search_enabled else None,
-                "model_error": model_error,
-            }
-
-            # --- SUMMARY log ---
-            if len(matched_results) == 0:
-                if len(crawled_pages) == 0:
-                    _no_results_reason = "No pages were crawled"
-                    _next_action = "Check if the start URL is valid and reachable"
-                elif len(ok_pages) == 0 and len(skipped_pages) > 0:
-                    _no_results_reason = "All attempted URLs were skipped"
-                    _next_action = "Check the skip reason in the debug log, or test another URL"
-                elif len(ok_pages) == 0 and len(error_pages) > 0:
-                    _no_results_reason = "All pages failed to fetch"
-                    _next_action = "Check network connectivity and the URL, then try again"
-                elif pages_with_text_count == 0:
-                    _no_results_reason = (
-                        "Pages were fetched but no text was extracted (JS rendering issue?)"
-                    )
-                else:
-                    _no_results_reason = "Keywords did not match any extracted text"
-                    _next_action = "Try different keywords or lower the semantic threshold"
-
-                add_debug_log(
-                    "SUMMARY",
-                    f"attempted={len(crawled_pages)} fetched_ok={len(ok_pages)} "
-                    f"skipped={len(skipped_pages)} failed={len(error_pages)} "
-                    f"parsed={len(page_results)} matched=0 "
-                    f"unmatched={len(unmatched_results)}",
-                )
-                add_debug_log("SUMMARY", f'no_results_reason="{_no_results_reason}"')
-                add_debug_log("SUMMARY", f'next_action="{_next_action}"')
-            else:
-                add_debug_log(
-                    "SUMMARY",
-                    f"attempted={len(crawled_pages)} fetched_ok={len(ok_pages)} "
-                    f"skipped={len(skipped_pages)} failed={len(error_pages)} "
-                    f"parsed={len(page_results)} matched={len(matched_results)} "
-                    f"unmatched={len(unmatched_results)}",
-                )
-
-            crawl_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            for result in matched_results:
-                result["crawl_timestamp"] = crawl_timestamp
+        if result.semantic_matcher is not None:
+            st.session_state["semantic_matcher_instance"] = result.semantic_matcher
 
         st.session_state.original_crawl_result_rows = matched_results
         st.session_state.crawl_result_rows_all = matched_results
         st.session_state.crawl_result_rows = matched_results
+        st.session_state.crawl_pipeline_stats = result.pipeline_stats
+        st.session_state.crawl_semantic_stats = result.semantic_stats
         st.session_state.path_filter_suggestions = build_common_path_suggestions(
             matched_results
         )
@@ -504,20 +291,6 @@ elif _run_crawl:
                 ),
             )
         add_debug_log("INFO", "━━━ Crawling erfolgreich abgeschlossen ━━━")
-
-    except Exception as exc:
-        st.session_state.crawl_result_rows = []
-        st.session_state.crawl_result_rows_all = []
-        st.session_state.crawling_completed = False
-        st.session_state.crawling = False
-        st.session_state.crawl_error = str(exc)
-        st.session_state.last_crawl_signature = None
-        st.session_state.crawl_semantic_stats = None
-        st.session_state.crawl_pipeline_stats = None
-        if request_id:
-            st.session_state.last_processed_crawl_request_id = request_id
-        st.session_state.crawl_requested = False
-        add_debug_log("ERROR", f"Crawling fehlgeschlagen: {type(exc).__name__}: {exc}")
 else:
     already_processed = bool(request_id and request_id == last_processed_id)
     if st.session_state.get("crawling_completed"):
@@ -1118,4 +891,4 @@ else:
             )
 
 # Versionnummer
-st.caption("Webcrawler-UI 2.0")
+st.caption("Webcrawler-UI 2.1")

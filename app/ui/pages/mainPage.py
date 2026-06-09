@@ -339,4 +339,4 @@ if st.button(
         st.switch_page("pages/crawlPage.py")
 
 st.markdown("---")
-st.caption("Webcrawler-UI 2.0")
+st.caption("Webcrawler-UI 2.1")
